@@ -100,83 +100,64 @@
     * @return {jQuery}
     */
     $.fn.validateInputOnBlur = function(language, config, attachKeyupEvent, eventContext) {
-        if(attachKeyupEvent === undefined)
-            attachKeyupEvent = true;
-        if(!eventContext)
-            eventContext = 'blur';
-
-        language = $.extend($.formUtils.LANG, language || {});
-        config = $.extend($.formUtils.defaultConfig(), config || {});
-        config.errorMessagePosition = 'element';
-
-        var $element = this,
-
-            // test if there is custom obj to hold element error msg (id = element name + err_msg)
-            elementErrMsgObj = document.getElementById($element.attr('name')+'_err_msg'),
-
-            $form = $element.closest("form"),
-
-            validationRule = $element.attr(config.validationRuleAttribute);
-
-        // Remove possible error style applied by previous validation
-        $element
-            .removeClass(config.errorElementClass)
-            .css('border-color', '')
-            .parent()
-                .find('.'+config.errorMessageClass).remove();
-
-        // Twitter bs
-        $form.find('.has-error').removeClass('has-error');
-        $element.removeClass('valid').parent().removeClass('has-success');
-
-        // if element has custom err msg container, clear it
-        if( elementErrMsgObj != null) {
-            elementErrMsgObj.innerHTML = '';
-        }
-
-        var validation = $.formUtils.validateInput($element, language, config, $form, eventContext);
-
-        if(validation === true) {
-            $element
-                .addClass('valid')
-                .parent()
-                    .addClass('has-success'); // twitter bs
-        } else if(validation === null) {
-            $element
-                .removeClass('valid')
-                .parent()
-                    .removeClass('has-error')
-                    .removeClass('has-success');
-        } else {
-            $element
-                .addClass(config.errorElementClass)
-                .removeClass('valid')
-                .parent()
-                    .addClass('has-error')
-                    .removeClass('has-success'); // twitter bs
-
-            // if element has custom err msg container, use it
-            if( elementErrMsgObj != null) {
-                elementErrMsgObj.innerHTML = validation;
-            } else { // use regular span append
-                var $parent = $element.parent();
-                $parent.append('<span class="'+config.errorMessageClass+' help-block">'+validation+'</span>');
-                $parent.addClass('has-error'); // twitter bs
-            }
-
-            if(config.borderColorOnError !== '') {
-                $element.css('border-color', config.borderColorOnError);
-            }
-
-            if(attachKeyupEvent) {
-                $element.bind('keyup', function() {
-                    $(this).validateInputOnBlur(language, config, false, 'keyup');
-                });
-            }
-        }
-
+    	if (attachKeyupEvent === undefined) attachKeyupEvent = true;
+        if (!eventContext) eventContext = "blur"; 
+    	language = $.extend($.formUtils.LANG, language || {});
+	    config = $.extend($.formUtils.defaultConfig(), config || {});
+	    config.errorMessagePosition = "element"; 
+	    
+	    
+	    var element = this,
+    		groupName = element.data("validation-group"), 
+    		$elements = [element],
+    		$form = element.closest("form"),
+    		requiredCnt = element.data("data-validation-count") || 1, //default to 1
+        	validCnt = 0,
+        	validation = null,
+        	validationResults = [];   	 
+        
+        //overwrite $element inputs if data-validation-group is present.
+    	if(groupName !== undefined){  
+        	$elements = element.find("[data-validation-group='" + groupName + "']");
+    	}
+    	
+    	///clear css classes from all elements.
+    	$.formUtils.clearAllStatuses($elements, $form, config);
+    	
+    	//validate each element and keep track of results.
+    	for(var i=0; i<$elements.length; i++){
+	        validation = $.formUtils.validateInput($($elements[i]), language, config, $form, eventContext);	        
+	        if(validation === true) {
+	        	validCnt++;
+	        } else {
+	        	validationResults[i] = validation;	        	
+	        }
+    	}   
+    	
+    	//if data-validation-group is present, then also check if all elements in array are blank.
+    	if($.isBlank($elements) && groupName != null) {
+    		validation = "Enter at least " + requiredCnt + " field from " + groupName + ".";
+    	} else { //otherwise check if valid element count >= required count, if not pass error messages.
+    		validation = validCnt >= requiredCnt ? true : validationResults;
+    	}
+    	
+    	//apply css classes to all elements in array.
+    	$.formUtils.applyAllStatuses($elements, validation, config, language, attachKeyupEvent);
         return this;
     };
+    
+    /**
+     * Loops through array of input elements and return true if none have a value.
+     * 
+     * @param {Array} elements
+     * @return boolean
+     */
+    $.isBlank = function(elements) {
+    	for(var i=0; i<elements.length; i++){
+    		if($(elements[i]).val() !== "") return false
+    	}
+    	return true
+    }; 
 
     /**
      * Short hand for fetching/adding/removing element attributes
@@ -206,39 +187,15 @@
      */
     $.fn.validateForm = function(language, config) {
 
-        language = $.extend($.formUtils.LANG, language || {});
+    	language = $.extend($.formUtils.LANG, language || {});
         config = $.extend($.formUtils.defaultConfig(), config || {});
 
         $.formUtils.isValidatingEntireForm = true;
         $.formUtils.haltValidation = false;
+        
+        var hasErrors = false,
 
-        /**
-         * Adds message to error message stack if not already in the message stack
-         *
-         * @param {String} mess
-         * @para {jQuery} $element
-         */
-        var addErrorMessage = function(mess, $element) {
-            // validate server side will return null as error message before the server is requested
-            if(mess !== null) {
-                if ($.inArray(mess, errorMessages) < 0) {
-                    errorMessages.push(mess);
-                }
-                errorInputs.push($element);
-                $element
-                    .valAttr('current-error', mess)
-                    .removeClass('valid')
-                    .parent()
-                    .removeClass('has-success');
-            }
-        },
-
-        /** Error messages for this validation */
-        errorMessages = [],
-
-        /** Input elements which value was not valid */
-        errorInputs = [],
-
+        
         /** Form instance */
         $form = this,
 
@@ -259,45 +216,61 @@
         //
         // Validate element values
         //
-        $form.find('input,textarea,select').filter(':not([type="submit"],[type="button"])').each(function() {
-            var $element = $(this);
+        $form.find('input,textarea,select').filter(':not([type="submit"],[type="button"],[type="hidden"])').each(function() {
+        	
+        	var $element = $(this);
             var elementType = $element.attr('type');
-            if (!ignoreInput($element.attr('name'), elementType)) {
-
-                var validation = $.formUtils.validateInput(
-                                $element,
-                                language,
-                                config,
-                                $form,
-                                'submit'
-                            );
-
-                if(validation !== true) {
-                    addErrorMessage(validation, $element);
-                } else {
-                    $element
-                        .valAttr('current-error', false)
-                        .addClass('valid')
-                        .parent()
-                            .addClass('has-success');
-                }
-            }
-
+            
+            var element = this,
+	    		groupName = $element.data("validation-group"),
+	    		$elements = $([element]),
+	    		$form = $element.closest("form"),
+	    		requiredCnt = $element.data("data-validation-count") || 1,
+	        	validCnt = 0,
+	        	validation = null,
+	        	validationResults = [];  	 
+            
+            //load all group elements if data-validation-group is present
+	    	if(groupName !== undefined){  
+	        	$elements = $($form.find("input[data-validation-group='" + groupName + "']"));
+	    	}
+	    	
+	    	 //don't process if element was already processed by validation group logic.
+	    	if ($elements.index($element) != 0){
+	    		return true;
+	    	}
+	    	
+	    	$.formUtils.clearAllStatuses($elements, $form, config);
+            
+	    	for(var i=0; i<$elements.length; i++){
+	            if (!ignoreInput($($elements[i]).attr('name'), elementType)) {
+	
+	                var validation = $.formUtils.validateInput(
+	                                $($elements[i]),
+	                                language,
+	                                config,
+	                                $form,
+	                                'submit'
+	                            );
+	                if(validation === true) {
+	    	        	validCnt++;
+	    	        } else if (validation != null) {
+	    	        	validationResults[i] = validation;
+	    	        }
+	            }
+	    	}
+	    	
+            if($.isBlank($elements) && groupName != null) {
+        		validation = "Enter at least " + requiredCnt + " field from " + groupName + ".";
+        	} else if (validCnt >= requiredCnt){
+        		validation = true;
+        	} else if (validation !== undefined && validation !== null){
+        		validation = validationResults;
+        		hasErrors = true;
+        	}
+        	
+        	$.formUtils.applyAllStatuses($elements, validation, config, language, 'submit');
         });
-
-        //
-        // Reset style and remove error class
-        //
-        $form.find('.has-error').removeClass('has-error');
-        $form.find('input,textarea,select')
-            .css('border-color', '')
-            .removeClass(config.errorElementClass);
-
-        //
-        // Remove possible error messages from last validation
-        //
-        $('.' + $.split(config.errorMessageClass, ' ').join('.')).remove();
-        $('.'+config.errorMessageClass).remove();
 
         //
         // Run validation callback
@@ -309,58 +282,10 @@
             }
         }
 
-        //
-        // Validation failed
-        //
-        if (!$.formUtils.haltValidation && errorInputs.length > 0) {
-
-            // Reset form validation flag
-            $.formUtils.isValidatingEntireForm = false;
-
-            // Apply error style to invalid inputs
-            $.each(errorInputs, function(i, $input) {
-                if (config.borderColorOnError !== '') {
-                    $input.css('border-color', config.borderColorOnError);
-                }
-                $input
-                    .addClass(config.errorElementClass)
-                    .parent()
-                        .addClass('has-error');
-            });
-
-            // display all error messages in top of form
-            if (config.errorMessagePosition === 'top') {
-                var messages = '<strong>' + language.errorTitle + '</strong>';
-                $.each(errorMessages, function(i, mess) {
-                    messages += '<br />* ' + mess;
-                });
-
-                // using div instead of P gives better control of css display properties
-                $form.children().eq(0).before('<div class="' + config.errorMessageClass + ' alert alert-danger">' + messages + '</div>');
-                if(config.scrollToTopOnError) {
-                    $(window).scrollTop($form.offset().top - 20);
-                }
-            }
-
-            // Display error message below input field
-            else {
-                $.each(errorInputs, function(i, $input) {
-                    var $parent = $input.parent(),
-                        $errorSpan = $parent.find('span[class='+config.errorMessageClass+']');
-                    if ($errorSpan.length > 0) {
-                        $errorSpan.text(', '+$input.valAttr('current-error'));
-                    } else {
-                        $parent.append('<span class="'+config.errorMessageClass+' help-block">' + $input.valAttr('current-error') + '</span>');
-                    }
-                });
-            }
-            return false;
-        }
-
         // Reset form validation flag
         $.formUtils.isValidatingEntireForm = false;
-
-        return !$.formUtils.haltValidation;
+        
+        return !hasErrors;
     };
 
     /**
@@ -1176,6 +1101,123 @@
             groupCheckedTooFewStart : 'Please choose at least ',
             groupCheckedTooManyStart : 'Please choose a maximum of ',           
             groupCheckedEnd : ' item(s)'
+        },
+        
+        /**
+         * Helper method to add error classes to input/span.
+         * 
+         * @param $element
+         * @param config
+         * @param validation
+         */
+        showError: function ($element, config, validation){
+        	var elementErrMsgObj = document.getElementById($element.attr("name") + "_err_msg");
+        	if( elementErrMsgObj != null) {
+                elementErrMsgObj.innerHTML = '';
+            }
+        	
+        	$element
+        		.addClass(config.errorElementClass)
+        		.removeClass("valid")
+        		.parent()
+        			.addClass("has-error")
+        			.removeClass("has-success");
+        	
+            if (elementErrMsgObj != null) {
+                elementErrMsgObj.innerHTML = validation
+            } else {
+                var $parent = $element.parent();
+                $parent.append('<span class="' + config.errorMessageClass + ' help-block">' + validation + "</span>");
+                $parent.addClass("has-error")
+            }
+            if (config.borderColorOnError !== "") {
+                $element.css("border-color", config.borderColorOnError)
+            }
+        },
+        
+        /**
+         * Helper method to remove all error/success classes on a given array of elements. 
+         *  
+         * @param $element
+         * @param $form
+         * @param config
+         */
+        clearAllStatuses: function ($elements, $form, config){
+        	for(var i=0; i<$elements.length; i++){
+        		$.formUtils.clearStatus($($elements[i]), $form, config)
+        	}
+        },
+        
+        /**
+         * Helper method to remove error/success classes from a given element.
+         * 
+         * @param $element
+         * @param $form
+         * @param config
+         */
+        clearStatus: function ($element, $form, config){
+        	$element
+        		.removeClass(config.errorElementClass)
+        		.css("border-color", "")
+        		.parent().find("." + config.errorMessageClass)
+        			.remove();
+	        $form.find(".has-error")
+	        	.removeClass("has-error");
+	        $element
+	        	.removeClass("valid")
+	        	.parent()
+	        		.removeClass("has-success")
+        },
+        
+        /**
+         * Helper method to apply all status classes on a given array of elements.
+         * 
+         * @param $element
+         * @param {String} validation
+         * @param config
+         * @param language
+         */
+        applyAllStatuses: function ($elements, validation, config, language){
+        	for(var i=0; i<$elements.length; i++){
+        		if (validation instanceof Array){
+        			$.formUtils.applyStatus($($elements[i]), validation[i], config, language)
+        		} else {
+        			$.formUtils.applyStatus($($elements[i]), validation, config, language)
+        		}
+        		
+        	}
+        },
+        
+        /**
+         * Helper method to apply all error/success status classes on a given element.
+         * 
+         * @param $element
+         * @param {String} validation
+         * @param config
+         * @param language
+         * @param attachKeyupEvent
+         */
+        applyStatus: function ($element, validation, config, language, attachKeyupEvent){        	
+        	if (validation === true) {
+	            $element
+	            	.addClass("valid")
+	            	.parent()
+	            		.addClass("has-success")
+	        } else if (validation === null) {
+	            $element
+	            	.removeClass("valid")
+	            	.parent()
+	            		.removeClass("has-error")
+	            		.removeClass("has-success")
+	        } else {
+	        	$.formUtils.showError($element, config, validation);
+	            
+	            if (attachKeyupEvent) {
+	                $element.bind("keyup", function () {
+	                    $(this).validateInputOnBlur(language, config, false, "keyup")
+	                })
+	            }
+	        }
         }
     };
 
